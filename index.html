@@ -254,7 +254,80 @@
 		</p>
 
 		<h2>Task 3: Transforms</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<h3>Implementing the transforms</h3>
+		<p>
+			All three transforms are \(3 \times 3\) matrices acting on homogeneous coordinates, where a 2D point \((x, y)\) is treated as
+			\((x, y, 1)\). The extra coordinate is what lets translation, normally an addition, be written as a matrix multiplication, so
+			any chain of transforms can be combined into a single matrix.
+			\[
+			\text{translate}(d_x, d_y) = \begin{bmatrix} 1 & 0 & d_x \\ 0 & 1 & d_y \\ 0 & 0 & 1 \end{bmatrix}, \quad
+			\text{scale}(s_x, s_y) = \begin{bmatrix} s_x & 0 & 0 \\ 0 & s_y & 0 \\ 0 & 0 & 1 \end{bmatrix}, \quad
+			\text{rotate}(\theta) = \begin{bmatrix} \cos\theta & -\sin\theta & 0 \\ \sin\theta & \cos\theta & 0 \\ 0 & 0 & 1 \end{bmatrix}
+			\]
+			<code>rotate</code> converts its angle from degrees to radians first. The rotation matrix follows the SVG specification; because
+			the screen's \(y\) axis points down, a positive angle turns shapes clockwise on screen, which matches how browsers draw SVG.
+			With these in place, <code>svg/transforms/robot.svg</code> renders like the reference image.
+		</p>
+
+		<h3>My cubeman: waving hello mid-stride</h3>
+		<figure>
+			<img src="assets/task3_my_robot.png" alt="Cubeman waving" style="width:70%"/>
+			<figcaption>
+				<a href="my_robot.svg"><code>my_robot.svg</code></a>, rendered with default viewing parameters.
+			</figcaption>
+		</figure>
+		<p>
+			I wanted cubeman to look like he is walking along and waving hello to someone. His right arm is raised with the elbow bent so the
+			forearm points up, ending in a gold hand; his left arm hangs relaxed and slightly back; and his legs are mid-stride, one stepping
+			forward and one pushing off behind, with both knees slightly bent. I also changed his colors (blue torso, gold head and hand) and
+			tilted his head toward the waving hand.
+		</p>
+		<p>
+			The original robot places every body part with only translations and scales, so none of its limbs can bend. To pose him, I rebuilt
+			each limb as a <b>hierarchy of joints</b>. For the waving arm:
+		</p>
+		<pre><code>translate to the shoulder, then rotate(-55)        (raises the whole arm)
+    upper arm
+    translate to the elbow, then rotate(-55)       (bends the forearm further up)
+        forearm
+        hand</code></pre>
+		<p>
+			Each group is nested inside its parent, so its transform is applied on top of the parent's. Rotating at the shoulder therefore
+			carries the elbow, forearm, and hand along with it, and the elbow rotation only bends the part of the arm below it, exactly like a
+			real joint. The legs work the same way, with a rotation at each hip and a smaller one at each knee. Every segment is still the same
+			unit square from the original file, stretched into shape with <code>scale</code>.
+		</p>
+
+		<h3>Extra credit: rotating the viewport</h3>
+		<figure>
+			<img src="assets/task3_ec_rotated.png" alt="robot.svg with the viewport rotated 45 degrees" style="width:70%"/>
+			<figcaption><code>svg/transforms/robot.svg</code> with the viewport rotated 45&deg; clockwise (three presses of <code>]</code>).</figcaption>
+		</figure>
+		<p>
+			I added two keys to the GUI that rotate the whole view about the center of the window: <code>]</code> rotates 15&deg; clockwise
+			and <code>[</code> rotates 15&deg; counterclockwise. Pressing <code>space</code> resets the rotation along with the rest of the
+			view, and the current angle is shown in the on-screen info text.
+		</p>
+		<p>
+			<b>How the matrix stack changed.</b> Every point in an SVG reaches the screen through two matrices: <code>svg_to_ndc</code>,
+			which chooses the visible region of the SVG and maps it into normalized device coordinates (the unit square \([0,1]^2\)), and
+			<code>ndc_to_screen</code>, which stretches that square to the window's pixels. I inserted a rotation between them, in NDC space:
+			\[
+			p_{\text{screen}} = \mathtt{ndc\_to\_screen} \cdot R \cdot \mathtt{svg\_to\_ndc} \cdot p_{\text{svg}}, \qquad
+			R = \text{translate}(0.5, 0.5) \cdot \text{rotate}(\theta) \cdot \text{translate}(-0.5, -0.5).
+			\]
+			Rotating directly would spin the image around NDC's origin, the top-left corner of the window. Translating the center
+			\((0.5, 0.5)\) to the origin, rotating, and translating back makes it spin around the middle of the window instead. Placing \(R\) in
+			NDC space means it composes cleanly with panning and zooming, which live in <code>svg_to_ndc</code>, and with window resizing,
+			which lives in <code>ndc_to_screen</code>; and because <code>ndc_to_screen</code> scales both axes equally, the rotated image is not distorted.
+			The same combined matrix is used for the canvas border, so it rotates together with the drawing.
+		</p>
+		<p>
+			Two smaller details: each SVG file keeps its own rotation angle, so switching files with the number keys does not carry the
+			rotation over; and mouse dragging still pans in the direction the mouse moves, because I rotate each drag by \(-\theta\) to convert
+			it from screen directions back into SVG directions before panning.
+		</p>
 
 		<h2>Task 4: Barycentric coordinates</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
