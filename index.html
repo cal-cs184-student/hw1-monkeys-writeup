@@ -389,7 +389,93 @@
 		</p>
 
 		<h2>Task 5: "Pixel sampling" for texture mapping</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<h3>What pixel sampling is</h3>
+		<p>
+			Texture mapping paints an image (the <i>texture</i>) onto a triangle. Each vertex of the triangle carries a texture coordinate
+			\((u, v) \in [0,1]^2\) saying which point of the texture it should show. For every sample point on screen, I use the
+			barycentric weights from Task 4 to blend the three vertices' texture coordinates:
+			\[ (u, v) = \alpha\,(u_0, v_0) + \beta\,(u_1, v_1) + \gamma\,(u_2, v_2). \]
+			That gives a location in the texture, and the question <i>pixel sampling</i> answers is: what color should be read from the texture
+			at that location? The texture is itself a grid of discrete pixels (texels), and \((u, v)\) almost never lands exactly on one, so
+			we need a rule for turning a continuous position into a color.
+		</p>
+		<ul>
+			<li><b>Nearest sampling</b> (<code>Texture::sample_nearest</code>) scales \((u, v)\) by the texture's width and height and returns
+				the single texel that contains the point. It is fast, but each screen pixel gets exactly one texel's color, so colors jump
+				abruptly from one texel to the next.</li>
+			<li><b>Bilinear sampling</b> (<code>Texture::sample_bilinear</code>) finds the four texels whose centers surround the point and
+				blends them according to how close the point is to each: two linear interpolations horizontally, then one vertically between those
+				results. Colors change smoothly between texels, at the cost of reading four texels instead of one.</li>
+		</ul>
+		<p>
+			<b>Implementation.</b> <code>rasterize_textured_triangle</code> uses the same bounding box, supersample grid, and barycentric inside
+			test as my Task 4 function, but interpolates texture coordinates instead of colors, then looks up the texture with nearest or bilinear
+			sampling depending on the <code>psm</code> setting (toggled with the <code>P</code> key). Because Task 6 is not implemented yet,
+			it always samples the full-resolution texture (mip level 0). In the texture, texel \((t_x, t_y)\) covers the square
+			\([t_x, t_x+1) \times [t_y, t_y+1)\), so its center is at \((t_x + 0.5,\ t_y + 0.5)\). Nearest sampling takes the floor of the scaled
+			coordinate; bilinear sampling subtracts 0.5 first so that it blends between texel <i>centers</i>. Both clamp to the texture's
+			border, so samples on or just past the edge stay valid.
+		</p>
+
+		<h3>Nearest vs. bilinear, at 1 and 16 samples per pixel</h3>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task5_nearest1.png" width="100%"/>
+						<figcaption>Nearest, 1 sample per pixel</figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task5_nearest16.png" width="100%"/>
+						<figcaption>Nearest, 16 samples per pixel</figcaption>
+					</td>
+				</tr>
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task5_bilinear1.png" width="100%"/>
+						<figcaption>Bilinear, 1 sample per pixel</figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task5_bilinear16.png" width="100%"/>
+						<figcaption>Bilinear, 16 samples per pixel</figcaption>
+					</td>
+				</tr>
+			</table>
+		</div>
+		<p>
+			All four show <code>svg/texmap/test1.svg</code> at the default view. The pixel inspector is on a narrow strip of sea along the desert
+			coast near the Arabian Peninsula, where the dotted red Tropic of Cancer line crosses.
+		</p>
+		<ul>
+			<li><b>Nearest, 1 sample:</b> the coastline is speckled and blocky, and the red dots of the tropic line are harsh and uneven.
+				The effect is even clearer in the full image: the thin white latitude and longitude lines break up into dashes with gaps, because
+				they are only about a texel wide and many screen pixels land on a texel just beside the line.</li>
+			<li><b>Bilinear, 1 sample:</b> the coastline and dots are noticeably smoother, and the grid lines become continuous. Even when a sample
+				lands next to a thin line, bilinear blending still picks up some of its color from the neighboring texel, so the line never
+				disappears completely.</li>
+			<li><b>Nearest, 16 samples</b> and <b>bilinear, 16 samples</b> look almost the same. With 16 samples per pixel, each pixel already
+				averages 16 texture lookups spread across its area, and that averaging smooths out the jumps that made nearest sampling look bad.
+				Bilinear is still slightly smoother, but supersampling has done most of the work.</li>
+		</ul>
+		<p>
+			<b>When the difference is large.</b> The two methods differ the most when the texture has sharp, high-contrast detail near the
+			size of a single texel, such as thin lines, text, or hard coastlines, and when each screen pixel takes only one sample.
+			There are two situations where this happens:
+		</p>
+		<ul>
+			<li><b>Magnification</b> (the texture is stretched, so one texel covers several screen pixels): nearest sampling shows each texel as a
+				visible square block, while bilinear blends smoothly between texel centers.</li>
+			<li><b>Thin features</b>, as in this map: nearest sampling either hits a thin line or misses it completely, so lines break into dashes;
+				bilinear always mixes in some of the neighboring texels, so thin details fade instead of vanishing.</li>
+		</ul>
+		<p>
+			When the texture varies slowly, like the open ocean in this image, neighboring texels are nearly the same color and both methods give
+			almost identical results. The difference also shrinks at high sample rates, because supersampling averages many lookups per pixel,
+			which blurs away the same discontinuities that bilinear sampling smooths. Neither method helps much when the texture is heavily
+			<i>shrunk</i> (many texels per pixel), because both still only look at one small neighborhood of texels; that is the problem Task 6's
+			mipmaps address.
+		</p>
 
 		<h2>Task 6: "Level Sampling" with mipmaps for texture mapping</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
