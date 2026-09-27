@@ -28,20 +28,15 @@
 	<body>
 		<div class="container">
 		<h1>CS184/284A Fall 2026 Homework 1 Write-Up</h1>
-		<div style="text-align: center;">Names: </div>
+		<div style="text-align: center;">Names: Derrick Yong</div>
 
 		<br>
 
-		Link to webpage: (TODO) <a href="https://cs184.eecs.berkeley.edu/fa26">cs184.eecs.berkeley.edu/fa26</a>
+		Link to webpage: <a href="https://cal-cs184-student.github.io/hw1-monkeys-writeup/">cal-cs184-student.github.io/hw1-monkeys-writeup</a>
 		
 		<br>
 
-		Link to GitHub repository: (TODO) <a href="https://cs184.eecs.berkeley.edu/fa26">cs184.eecs.berkeley.edu/fa26</a>
-
-		<figure>
-			<img src="assets/lion.jpg" alt="Lion" style="width:50%"/>
-			<figcaption>You can add images with captions!</figcaption>
-		</figure>
+		Link to GitHub repository: <a href="https://github.com/cal-cs184-student/hw1-monkeys-writeup">github.com/cal-cs184-student/hw1-monkeys-writeup</a>
 
 		<!--
 		We've already added one heading per task, to make your write-up as navigable when grading. Please fit your write-up within these sections!
@@ -51,34 +46,92 @@
 		Give a high-level overview of what you implemented in this homework. Think about what you've built as a whole. Share your thoughts on what interesting things you've learned from completing the homework.
 
 		<h2>Task 1: Drawing Single-Color Triangles</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
-		<p>Here is an example 2x2 gridlike structure using an HTML table. Each <b>tr</b> is a row and each <b>td</b> is a column in that row. You might find this useful for framing and showing your result images in an organized fashion.</p>
-		<div style="display: flex; flex-direction: column; align-items: center;">
-			<table style="width: 100%; text-align: center; border-collapse: collapse;">
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-			  </tr>
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-			  </tr>
-			</table>
-		</div>
-		
+		<h3>How I rasterize triangles</h3>
+		<p>
+			A triangle arrives in <code>rasterize_triangle</code> as three screen-space vertices \(P_0, P_1, P_2\) and a single color.
+			Rasterizing it means deciding which pixels it covers. I sample each pixel once, at its center
+			\((x + 0.5,\ y + 0.5)\), and color the pixel with <code>fill_pixel()</code> if that sample point lies inside the triangle.
+		</p>
+		<p>
+			To decide whether a point is inside, I use the three line tests from lecture. For the edge from \(P_i\) to \(P_j\), the edge function is
+			\[ L_{ij}(x, y) = -(x - x_i)(y_j - y_i) + (y - y_i)(x_j - x_i), \]
+			which is positive on one side of the edge, negative on the other, and zero exactly on it.
+			I evaluate it for the three edges \(P_0 \to P_1\), \(P_1 \to P_2\), and \(P_2 \to P_0\).
+			A point is inside the triangle when it is on the same side of all three edges.
+		</p>
+		<p>
+			Two details make this robust:
+		</p>
+		<ul>
+			<li><b>Winding order.</b> The vertices can be listed clockwise or counter-clockwise, which flips the sign of every edge function.
+				I therefore treat a sample as inside if all three values are \(\geq 0\) <i>or</i> all three are \(\leq 0\).
+				This matters in practice: <code>Rect::draw</code> splits each rectangle into two triangles with opposite winding,
+				and <code>basic/test6.svg</code> checks for it directly.</li>
+			<li><b>Samples on an edge.</b> Using \(\geq\) and \(\leq\) rather than strict inequalities means a sample exactly on a boundary is drawn,
+				so no edge is left unrasterized and there are no cracks between triangles that share an edge.</li>
+		</ul>
+
+		<h3>Why this is no worse than checking the bounding box</h3>
+		<p>
+			My algorithm <i>is</i> the bounding-box algorithm. Before looping, I take the minimum and maximum of the three vertices' \(x\) and \(y\)
+			coordinates (rounded outward with <code>floor</code> and <code>ceil</code>), which gives the smallest pixel-aligned rectangle containing the
+			whole triangle. I only test pixels inside that rectangle, so I never do more work than a bounding-box rasterizer.
+			I also clamp the box to the framebuffer, which skips off-screen pixels entirely and prevents out-of-bounds writes to the sample buffer
+			when a triangle extends past the edge of the window.
+		</p>
+
+		<h3>Result: <code>basic/test4.svg</code></h3>
+		<figure>
+			<img src="assets/task1_test4.png" alt="basic/test4.svg with pixel inspector" style="width:70%"/>
+			<figcaption>
+				<code>basic/test4.svg</code> at the default view, one sample per pixel. The pixel inspector is centered on the thin right tip
+				of the red triangle. Because the triangle is narrower than a pixel there, most pixel centers fall outside it, so it breaks into
+				disconnected fragments with gaps between them instead of a continuous sliver (the magenta sliver's detached top tip shows the
+				same effect). This aliasing comes from taking only one sample per pixel; Task 2's supersampling addresses it.
+			</figcaption>
+		</figure>
+
+		<h3>Extra credit: optimizations</h3>
+		<p>
+			I kept the basic version behind a compile-time switch (<code>#define FAST_RASTER</code>) so the two could be timed against each other.
+			The optimized version makes four changes:
+		</p>
+		<ol>
+			<li><b>Fix the winding once.</b> I compute the triangle's signed area; if it is negative, I swap two vertices.
+				Every triangle is then counter-clockwise, so the inner loop needs only one sign check (all \(\geq 0\)) instead of two.</li>
+			<li><b>Precompute edge coefficients.</b> Each edge function is linear, so I rewrite it as \(L(x, y) = Ax + By + C\) and compute
+				\(A\), \(B\), \(C\) once per triangle, outside the loops, instead of redoing the vertex subtractions for every pixel.</li>
+			<li><b>Incremental evaluation.</b> Moving one pixel to the right changes each \(L\) by exactly \(A\). I evaluate the three edge functions
+				once at the start of each row and then just add \(A\) at each step, so the inner loop does 3 additions instead of 6 multiplications
+				and about a dozen additions and subtractions. I store these values as <code>double</code>, because adding repeatedly in
+				<code>float</code> accumulated enough rounding error to flip a few pixels exactly on edges.</li>
+			<li><b>Early exit per row.</b> A triangle is convex, so each row crosses it in one continuous span. Once a row has entered the triangle and
+				then left it, I stop scanning that row. This skips the empty part of the bounding box to the right of the triangle.</li>
+		</ol>
+		<p>
+			Timings were measured with <code>std::chrono::high_resolution_clock</code> around <code>svg.draw()</code> in
+			<code>DrawRend::redraw()</code>, averaged over 9&ndash;14 redraws each (pressing space to redraw), at the same window size (1514 &times; 1762) and the default zoom.
+		</p>
+		<table style="margin: 0 auto; border-collapse: collapse; text-align: center;">
+			<tr>
+				<th style="border-bottom: 1px solid #999; padding: 6px 16px;">Test</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 16px;">Basic (ms)</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 16px;">Optimized (ms)</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 16px;">Speedup</th>
+			</tr>
+			<tr><td style="padding: 6px 16px;">basic/test3.svg</td><td>11.46</td><td>8.22</td><td>1.39&times;</td></tr>
+			<tr><td style="padding: 6px 16px;">basic/test4.svg</td><td>0.76</td><td>0.55</td><td>1.37&times;</td></tr>
+			<tr><td style="padding: 6px 16px;">basic/test6.svg</td><td>1.36</td><td>0.91</td><td>1.49&times;</td></tr>
+		</table>
+		<p>
+			The optimized rasterizer was about 1.4&ndash;1.5&times; faster on every test. <code>test3.svg</code> (the dragon) is by far the most
+			expensive scene because its large polygon is triangulated into many triangles covering a lot of pixels, so it saves the most absolute time
+			(about 3.2 ms per frame). The speedup is moderate rather than dramatic, likely because each covered pixel still costs a call to
+			<code>fill_pixel()</code> and a memory write, which the optimizations do not remove. The optimized <code>test3</code> timings were also
+			noisier than the others (individual redraws ranged from 7.2 to 10.0 ms), so its speedup is somewhat less precise.
+		</p>
+
 		<h2>Task 2: Antialiasing by Supersampling</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
@@ -97,16 +150,6 @@
 		<h2>(Optional) Task 7: Extra Credit - Draw Something Creative!</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
-		<h2>Additional Notes (please remove)</h2>
-		<ul>
-			<li>You can also add code if you'd like as so: <code>code code code</code></li>
-			<li>If you'd like to add math equations, 
-				<ul>
-					<li>You can write inline equations like so: \( a^2 + b^2 = c^2 \)</li>
-					<li>You can write display equations like so: \[ a^2 + b^2 = c^2 \]</li>
-				</ul>
-			</li>
-		</ul>
 		</div>
 	</body>
 </html>
