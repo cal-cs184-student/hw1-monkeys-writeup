@@ -330,7 +330,63 @@
 		</p>
 
 		<h2>Task 4: Barycentric coordinates</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<h3>What barycentric coordinates are</h3>
+		<p>
+			Barycentric coordinates describe any point \(p\) inside a triangle as a weighted mix of the triangle's three corners:
+			\[ p = \alpha P_0 + \beta P_1 + \gamma P_2, \qquad \alpha + \beta + \gamma = 1. \]
+			Each weight says how strongly the point "belongs" to one corner. \(\alpha\) is 1 exactly at \(P_0\), falls off steadily as you
+			move away, and reaches 0 along the edge opposite \(P_0\); \(\beta\) and \(\gamma\) behave the same way for \(P_1\) and \(P_2\).
+			At the center of the triangle all three are \(1/3\). If any weight is negative, the point is outside the triangle.
+		</p>
+		<p>
+			Once a point has these weights, <i>anything</i> defined at the corners can be blended across the triangle the same way. For color:
+			\[ c(p) = \alpha\, c_0 + \beta\, c_1 + \gamma\, c_2. \]
+			A useful way to picture it: \(\alpha\) is the fraction of the triangle's area taken up by the smaller triangle formed by \(p\) and
+			the two <i>other</i> corners. As \(p\) slides toward \(P_0\), that smaller triangle grows to fill the whole triangle and
+			\(\alpha\) approaches 1.
+		</p>
+		<figure>
+			<img src="assets/task4_rgb_triangle.png" alt="Red, green, and blue triangle" style="width:60%"/>
+			<figcaption>
+				A single triangle with a red, a green, and a blue vertex (<code>svg/basic/rgb_triangle.svg</code>, which I made for this).
+				Each pixel's color is its barycentric weights applied to the three corner colors.
+			</figcaption>
+		</figure>
+		<p>
+			This image shows the weights directly, because each one controls a single color channel. How red a pixel is <i>is</i> its
+			\(\alpha\), how green it is is its \(\beta\), and how blue it is is its \(\gamma\). The corners are pure red, green, and blue because
+			one weight is 1 there. Along each edge, only the two colors at that edge's ends mix (for example, green and blue along the bottom
+			edge give teal), because the weight of the opposite corner is 0 on that edge. In the middle, all three weights are about
+			\(1/3\), which gives the grayish blend.
+		</p>
+
+		<h3>Implementation</h3>
+		<p>
+			I compute the weights with the same edge functions I use for inside testing in Task 1. The edge function of the edge
+			\(P_1 \to P_2\) is 0 along that edge and grows linearly toward \(P_0\), which is exactly how \(\alpha\) behaves, just unnormalized.
+			Dividing by its value at \(P_0\) normalizes it:
+			\[
+			\alpha = \frac{L_{12}(p)}{L_{12}(P_0)}, \qquad \beta = \frac{L_{20}(p)}{L_{20}(P_1)}, \qquad \gamma = 1 - \alpha - \beta.
+			\]
+			A sample is inside the triangle when \(\alpha, \beta, \gamma \geq 0\), so the weights double as the inside test. Dividing by the
+			value at the corner also cancels the sign that depends on winding order, so clockwise and counter-clockwise triangles work without
+			a special case. The two denominators are computed once per triangle, and a zero-area triangle is skipped. The function uses the
+			same bounding box and supersample grid as <code>rasterize_triangle</code>, so color-interpolated triangles are antialiased by
+			Task 2's supersampling too.
+		</p>
+
+		<h3>Result: <code>svg/basic/test7.svg</code></h3>
+		<figure>
+			<img src="assets/task4_test7.png" alt="Color wheel" style="width:70%"/>
+			<figcaption><code>svg/basic/test7.svg</code> with default viewing parameters and sample rate 1.</figcaption>
+		</figure>
+		<p>
+			The color wheel is a fan of thin triangles, each with a black vertex at the center and two fully saturated colors on the rim.
+			Barycentric interpolation blends from black at the center to full brightness at the edge and between neighboring hues around
+			the rim. You can see faint straight "spokes" where neighboring triangles meet: interpolation is linear <i>within</i> each
+			triangle, so the rate at which the color changes can jump slightly when crossing into the next triangle.
+		</p>
 
 		<h2>Task 5: "Pixel sampling" for texture mapping</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
