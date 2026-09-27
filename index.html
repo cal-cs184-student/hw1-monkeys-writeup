@@ -133,7 +133,125 @@
 		</p>
 
 		<h2>Task 2: Antialiasing by Supersampling</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<h3>Algorithm and data structures</h3>
+		<p>
+			Supersampling tests several points inside each pixel instead of one, then sets the pixel to the average of the results.
+			With a sample rate of \(N\), I use an \(n \times n\) grid of samples per pixel, where \(n = \sqrt{N}\).
+			A useful way to picture it is as rendering a temporary image that is \(n\) times wider and taller than the screen,
+			then shrinking it back down.
+		</p>
+		<p>
+			<b>Data structure.</b> All samples live in <code>sample_buffer</code>, a <code>std::vector&lt;Color&gt;</code> with
+			one entry per sample, so it holds \(\text{width} \times \text{height} \times N\) colors. The samples of each pixel are stored
+			contiguously: sample \((i, j)\) of pixel \((x, y)\) is at index
+			\[ (y \cdot \text{width} + x) \cdot N + j \cdot n + i. \]
+			Keeping a pixel's samples next to each other makes the final averaging step a simple walk over consecutive memory.
+		</p>
+
+		<h3>Changes to the rasterization pipeline</h3>
+		<ul>
+			<li><b>Buffer sizing</b> (<code>set_sample_rate</code>, <code>set_framebuffer_target</code>): the buffer is resized to
+				\(\text{width} \times \text{height} \times N\) whenever the window size or the sample rate changes.
+				<code>clear_buffers</code> already reset every entry to white at the start of each frame, so it needed no change.</li>
+			<li><b>Triangles</b> (<code>rasterize_triangle</code>): instead of testing one point per pixel, I test every sample in the
+				triangle's bounding box. Sample \((i, j)\) of pixel \((x, y)\) sits at the center of its sub-cell,
+				\[ \left(x + \tfrac{i + 0.5}{n},\ \ y + \tfrac{j + 0.5}{n}\right), \]
+				using the same three edge tests as Task 1. A covered sample gets the triangle's color; the others are left alone.
+				My optimized rasterizer from Task 1 carries over directly: it now steps across rows of samples, adding
+				\(A/n\) instead of \(A\) per step.</li>
+			<li><b>Points and lines</b> (<code>fill_pixel</code>): these are not antialiased, so <code>fill_pixel</code> writes the same
+				color into all \(N\) samples of the pixel. The pixel then averages back to exactly that color, which keeps lines such as the
+				black border in <code>test4.svg</code> crisp.</li>
+			<li><b>Resolving</b> (<code>resolve_to_framebuffer</code>): after everything is drawn, each pixel's \(N\) samples are averaged
+				(a box filter), clamped to \([0, 1]\), and rounded to the 8-bit values the display expects.</li>
+		</ul>
+		<p>
+			<b>Why this antialiases.</b> With one sample per pixel, an edge pixel is either fully colored or not at all, which produces jagged
+			staircases and makes thin shapes break apart. With \(N\) samples, the pixel's final color is proportional to the fraction of
+			samples the triangle covers, which approximates how much of the pixel's area the triangle actually covers. Edges therefore fade
+			smoothly between colors. In signal-processing terms, averaging over the pixel is a low-pass filter that removes the high-frequency
+			detail a single sample cannot represent, before it can alias.
+		</p>
+
+		<h3>Results: <code>basic/test4.svg</code></h3>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task2_rate1.png" width="100%"/>
+						<figcaption>Sample rate 1</figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task2_rate4.png" width="100%"/>
+						<figcaption>Sample rate 4</figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task2_rate16.png" width="100%"/>
+						<figcaption>Sample rate 16</figcaption>
+					</td>
+				</tr>
+			</table>
+		</div>
+		<p>
+			All three use the default view, with the pixel inspector on the same spot: the thin right tip of the red triangle.
+		</p>
+		<ul>
+			<li><b>Rate 1:</b> every pixel is either pure red or pure white. Where the triangle is thinner than a pixel, most pixel centers
+				miss it, so the sliver breaks into disconnected runs with gaps between them.</li>
+			<li><b>Rate 4:</b> the gaps fill in with pink pixels. Each pixel now has four chances to hit the triangle, so a pixel that is
+				partly covered shows up as a partial blend instead of vanishing, and the sliver becomes continuous.</li>
+			<li><b>Rate 16:</b> many more intermediate shades appear, and they vary smoothly along the sliver. With 16 samples, coverage
+				is measured in steps of \(1/16\) instead of \(1/4\), so each pixel's shade tracks the true covered area much more
+				closely, and the thin tip fades out gradually the way it should.</li>
+		</ul>
+		<p>
+			The cost is time and memory, both of which grow linearly with the sample rate. In my timings, drawing <code>test4.svg</code>
+			took about 0.5 ms at rate 1 and about 8.6 ms at rate 16, and the sample buffer at 16&times; holds 16 times as many colors as the screen has pixels.
+		</p>
+
+		<h3>Extra credit: jittered sampling</h3>
+		<p>
+			Grid supersampling still places samples in a perfectly regular pattern, just a finer one. Any detail that is regular and finer
+			than the sample spacing can still alias, and because the samples are regular, the error shows up as structured, repeating patterns
+			that look like real features. Jittered sampling breaks that regularity: each sample is placed at a <i>random</i> point inside
+			its \(1/n \times 1/n\) sub-cell instead of at the sub-cell's center. The error is still there, but it becomes unstructured noise,
+			which the eye finds much less objectionable than false patterns.
+		</p>
+		<p>
+			<b>Implementation.</b> I added a compile-time switch, <code>JITTER_SAMPLING</code>. The random offset for each sample comes from a
+			small integer hash of the sample's position in the high-resolution grid, not from a random number generator. This matters for two
+			reasons. First, two triangles that share an edge test exactly the same sample points, so there are no cracks or double-covered
+			samples along shared edges. Second, the pattern is identical every time the frame is redrawn, so the image does not flicker.
+			Because jittered samples are no longer evenly spaced, the incremental stepping and early row exit from my optimized rasterizer do
+			not apply, so this path evaluates the edge functions directly for every sample.
+		</p>
+		<p>
+			<b>Test scene.</b> To show the difference, I made <code>svg/jitter_fan.svg</code>: 120 thin black wedges meeting at the center of a
+			circle. Toward the center, the wedges become narrower than the sample spacing, which is exactly where grid sampling fails.
+		</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task2_ec_grid16.png" width="100%"/>
+						<figcaption>Grid supersampling, rate 16</figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task2_ec_jitter16.png" width="100%"/>
+						<figcaption>Jittered supersampling, rate 16</figcaption>
+					</td>
+				</tr>
+			</table>
+		</div>
+		<p>
+			Both images use the default view at 16 samples per pixel, with the pixel inspector over the center of the fan.
+			With the grid, the inspector shows clear artificial structure: a diagonal X shape and symmetric pairs of bright and dark pixels
+			that do not exist in the scene. They come from the regular sample grid lining up with the regular wedges. With jitter, that structure
+			is gone and the center becomes fine grain around a uniform gray, which is closer to the true average of the black and white wedges.
+			Away from the center, where the wedges are wide, the two methods give nearly identical results. Jitter does not remove the error;
+			it trades structured aliasing for noise.
+		</p>
 
 		<h2>Task 3: Transforms</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
