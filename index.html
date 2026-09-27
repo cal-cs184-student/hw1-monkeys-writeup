@@ -43,7 +43,26 @@
 		-->
 
 		<h2>Overview</h2>
-		Give a high-level overview of what you implemented in this homework. Think about what you've built as a whole. Share your thoughts on what interesting things you've learned from completing the homework.
+		<p>
+			In this homework I built a software rasterizer that turns SVG files into images, one pixel at a time. It starts by filling
+			single-color triangles using edge-function inside tests over each triangle's bounding box (Task 1), then antialiases them by
+			supersampling several points per pixel and averaging (Task 2). On top of that, I implemented the 2D transforms that position shapes
+			in hierarchical SVG scenes (Task 3), barycentric coordinates to blend colors smoothly across triangles (Task 4), and texture mapping,
+			first with nearest and bilinear pixel sampling (Task 5) and then with mipmaps and level sampling (Task 6). For extra credit I also
+			optimized the triangle rasterizer, added jittered sampling, added viewport rotation to the GUI, and implemented anisotropic
+			texture filtering.
+		</p>
+		<p>
+			The main thing I took away is that almost every task was the same problem in a different form: <b>sampling</b>. A continuous
+			signal, whether a triangle's edge, a thin sliver, or a detailed texture, has to be represented by a limited number of discrete
+			samples, and whenever the signal has detail finer than the sample spacing, it aliases into jagged edges, broken lines, or moiré.
+			The fixes all follow one idea, which is to average over the area a pixel covers instead of trusting a single point: supersampling
+			does it by taking more samples, bilinear filtering by blending neighboring texels, mipmaps by pre-averaging the texture, and
+			anisotropic filtering by averaging along the direction the texture is squashed. Each one trades some speed or memory for accuracy,
+			and seeing those tradeoffs in the actual timings made them much more concrete for me. I was also struck by how much one small
+			mathematical tool gets reused: the edge function from Task 1 turned out to give barycentric coordinates in Task 4, which then gave
+			texture coordinates in Task 5 and their rates of change in Task 6.
+		</p>
 
 		<h2>Task 1: Drawing Single-Color Triangles</h2>
 
@@ -411,8 +430,9 @@
 		<p>
 			<b>Implementation.</b> <code>rasterize_textured_triangle</code> uses the same bounding box, supersample grid, and barycentric inside
 			test as my Task 4 function, but interpolates texture coordinates instead of colors, then looks up the texture with nearest or bilinear
-			sampling depending on the <code>psm</code> setting (toggled with the <code>P</code> key). Because Task 6 is not implemented yet,
-			it always samples the full-resolution texture (mip level 0). In the texture, texel \((t_x, t_y)\) covers the square
+			sampling depending on the <code>psm</code> setting (toggled with the <code>P</code> key). For Task 5 it always sampled the
+			full-resolution texture (mip level 0); in Task 6 this lookup is replaced by a call to <code>tex.sample</code>, which also chooses a
+			mip level. With <code>L_ZERO</code> selected (the default), the behavior is exactly the Task 5 behavior shown below. In the texture, texel \((t_x, t_y)\) covers the square
 			\([t_x, t_x+1) \times [t_y, t_y+1)\), so its center is at \((t_x + 0.5,\ t_y + 0.5)\). Nearest sampling takes the floor of the scaled
 			coordinate; bilinear sampling subtracts 0.5 first so that it blends between texel <i>centers</i>. Both clamp to the texture's
 			border, so samples on or just past the edge stay valid.
@@ -478,11 +498,205 @@
 		</p>
 
 		<h2>Task 6: "Level Sampling" with mipmaps for texture mapping</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<h3>What level sampling is</h3>
+		<p>
+			Pixel sampling (Task 5) decides how to read a color <i>near</i> one point of the texture. That is enough when the texture is
+			shown at about its own size or larger. But when a texture is shrunk on screen, one pixel covers many texels, and reading just
+			one or four of them picks an essentially random texel from that region. Small shifts change which texel gets picked, so fine
+			detail turns into noise, moiré, and broken lines: aliasing again, this time inside the texture.
+		</p>
+		<p>
+			A <b>mipmap</b> fixes this by precomputing smaller versions of the texture: level 0 is full resolution, level 1 is half the width
+			and height with each texel averaging a \(2 \times 2\) block, level 2 is a quarter, and so on. <b>Level sampling</b> means choosing,
+			for each sample, the level whose texels are about the same size as the screen pixel, so a single lookup already represents the
+			average over the pixel's whole footprint. Detail that is too small to show gets averaged away in advance instead of aliasing.
+		</p>
+
+		<h3>Implementation</h3>
+		<p>
+			In <code>rasterize_textured_triangle</code>, for every sample I compute the barycentric-interpolated texture coordinates at the
+			sample \((x, y)\) and also at \((x+1, y)\) and \((x, y+1)\), one pixel to the right and one pixel down, and store them in a
+			<code>SampleParams</code> struct (<code>p_uv</code>, <code>p_dx_uv</code>, <code>p_dy_uv</code>) together with the current
+			<code>psm</code> and <code>lsm</code>. Then I call <code>tex.sample(sp)</code>.
+		</p>
+		<p>
+			<code>Texture::get_level</code> subtracts to get how far the texture coordinates move per screen pixel, scales by the texture's
+			width and height to convert to texels, and computes
+			\[
+			L = \max\left( \left\| \left(\tfrac{du}{dx}, \tfrac{dv}{dx}\right) \right\|,\ \left\| \left(\tfrac{du}{dy}, \tfrac{dv}{dy}\right) \right\| \right),
+			\qquad D = \log_2 L.
+			\]
+			\(L\) is how many texels one pixel spans along its longer side. Since each mip level halves the resolution, level \(D\) has about
+			one texel per pixel. When \(L \le 1\) the texture is magnified, so I return level 0.
+		</p>
+		<p>
+			<code>Texture::sample</code> then uses the level according to <code>lsm</code> (the <code>L</code> key), and samples each level
+			with nearest or bilinear pixel sampling according to <code>psm</code> (the <code>P</code> key), so all six combinations work:
+		</p>
+		<ul>
+			<li><b><code>L_ZERO</code>:</b> always level 0, as in Task 5.</li>
+			<li><b><code>L_NEAREST</code>:</b> rounds \(D\) to the nearest whole level and samples it.</li>
+			<li><b><code>L_LINEAR</code>:</b> samples the two levels on either side of \(D\) and blends them by the fractional part of \(D\).
+				With bilinear pixel sampling, this is <b>trilinear filtering</b>: two bilinear lookups blended across levels, for 8 texels in total.</li>
+		</ul>
+		<p>
+			All levels are accessed by reference, never copied. One quirk of the starter code: <code>generate_mips</code> allocates the final
+			\(1 \times 1\) level but never fills it in, so it stays black. I clamp the level to the last level that holds data, so textures seen
+			from extremely far away do not turn black.
+		</p>
+
+		<h3>Tradeoffs: pixel sampling, level sampling, and samples per pixel</h3>
+		<table style="margin: 0 auto; border-collapse: collapse;">
+			<tr>
+				<th style="border-bottom: 1px solid #999; padding: 6px 12px; text-align: left;">Technique</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 12px; text-align: left;">Speed</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 12px; text-align: left;">Memory</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 12px; text-align: left;">Antialiasing power</th>
+			</tr>
+			<tr>
+				<td style="padding: 6px 12px; vertical-align: top;"><b>Pixel sampling</b><br>(nearest vs. bilinear)</td>
+				<td style="padding: 6px 12px; vertical-align: top;">Bilinear reads 4 texels instead of 1 and does 3 blends; roughly 2&times; slower in my timings.</td>
+				<td style="padding: 6px 12px; vertical-align: top;">No extra memory.</td>
+				<td style="padding: 6px 12px; vertical-align: top;">Smooths blockiness when the texture is magnified and softens thin features, but only looks at a \(2 \times 2\) neighborhood, so it cannot fix aliasing when the texture is shrunk a lot.</td>
+			</tr>
+			<tr>
+				<td style="padding: 6px 12px; vertical-align: top;"><b>Level sampling</b><br>(level 0 vs. nearest level vs. level interpolation)</td>
+				<td style="padding: 6px 12px; vertical-align: top;">Costs extra work per sample: two more uv interpolations and a \(\log_2\); level interpolation also doubles the lookups. Mipmaps are built once when the texture loads.</td>
+				<td style="padding: 6px 12px; vertical-align: top;">The mipmap adds about \(1/3\) to the texture's memory (\(1/4 + 1/16 + \dots\)).</td>
+				<td style="padding: 6px 12px; vertical-align: top;">Very effective for shrunk textures: each lookup already averages the pixel's footprint. Nearest level can show visible seams where the level jumps; level interpolation removes them. It can over-blur, because it uses the footprint's longer side in both directions.</td>
+			</tr>
+			<tr>
+				<td style="padding: 6px 12px; vertical-align: top;"><b>Samples per pixel</b><br>(supersampling, Task 2)</td>
+				<td style="padding: 6px 12px; vertical-align: top;">Slowest: all the work scales with the sample rate, so 16 samples is roughly 16&times; the work.</td>
+				<td style="padding: 6px 12px; vertical-align: top;">Also scales with the sample rate: the sample buffer holds one color per sample, 16&times; the framebuffer at rate 16.</td>
+				<td style="padding: 6px 12px; vertical-align: top;">The most general: it antialiases triangle edges as well as textures. But for textures it is brute force, and it only helps as far as its rate reaches.</td>
+			</tr>
+		</table>
+
+		<h3>Results with my own texture</h3>
+		<p>
+			My texture, <code>bricks.png</code>, is a \(1024 \times 1024\) red brick wall with thin 2-texel mortar lines and a fine speckle on
+			each brick. I tiled it \(4 \times 4\) across the canvas in <code>svg/texmap/bricks.svg</code>, so it is shrunk about \(4\times\) at
+			the default view. Thin, regular lines like the mortar are exactly the kind of detail that aliases badly when shrunk.
+		</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task6_zero_nearest.png" width="100%"/>
+						<figcaption><code>L_ZERO</code> + <code>P_NEAREST</code></figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task6_zero_bilinear.png" width="100%"/>
+						<figcaption><code>L_ZERO</code> + <code>P_LINEAR</code></figcaption>
+					</td>
+				</tr>
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task6_nearestlevel_nearest.png" width="100%"/>
+						<figcaption><code>L_NEAREST</code> + <code>P_NEAREST</code></figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task6_nearestlevel_bilinear.png" width="100%"/>
+						<figcaption><code>L_NEAREST</code> + <code>P_LINEAR</code></figcaption>
+					</td>
+				</tr>
+			</table>
+		</div>
+		<ul>
+			<li><b>Level 0 + nearest:</b> the sharpest, but aliased. Each pixel reads one texel out of roughly a \(4 \times 4\) block,
+				so whether it lands on mortar or brick is luck. In the pixel inspector, most mortar lines come out as crisp, 1-pixel-wide lines,
+				but one horizontal mortar line near the top is only partly hit. Across the full image, the regular pixel grid beats against the
+				regular brick pattern and produces uneven, patchy bands (moir&eacute;) that are not in the texture.</li>
+			<li><b>Level 0 + bilinear:</b> almost indistinguishable from level 0 + nearest. Bilinear only blends the 4 texels nearest the
+				sample point, a small fraction of the roughly 16 the pixel actually covers, so it cannot remove this kind of aliasing.</li>
+			<li><b>Nearest level + nearest:</b> the moir&eacute; bands disappear and the wall looks even. At level 2, each texel already
+				averages a \(4 \times 4\) block of the original, so in the inspector the mortar becomes softer, wider, pinkish lines: mortar
+				and brick color averaged together, which is the correct average for a pixel covering both.</li>
+			<li><b>Nearest level + bilinear:</b> very similar to nearest level + nearest, with slightly smoother transitions between texels.</li>
+		</ul>
+		<p>
+			On this image the difference is subtle, and it shows the core tradeoff of level sampling: level 0 looks <i>sharper</i>, but its
+			sharpness is wrong, because it comes from arbitrarily picking one texel per pixel, which produces the patchy moir&eacute;. Mipmapping
+			gives up that false crispness for a softer image that correctly represents what each pixel covers. Level sampling matters much
+			more than pixel sampling here, because the problem is that the texture is shrunk; pixel sampling only refines the result. In my
+			timings for this scene, level 0 + nearest took about 15 ms per frame, level 0 + bilinear about 34 ms, nearest level + nearest about
+			25 ms, and nearest level + bilinear about 52 ms.
+		</p>
+
+		<h3>Extra credit: anisotropic filtering</h3>
+		<p>
+			Mipmapping chooses a level from the footprint's <i>longer</i> side and applies it in both directions. That is fine when a
+			pixel covers a roughly square patch of texture, but on a surface seen at a grazing angle, like a floor stretching away, a pixel
+			covers a long, thin strip. Choosing the level from the long side blurs the short direction far more than necessary, so distant
+			surfaces smear into a flat color.
+		</p>
+		<p>
+			I added a fourth level sampling mode, <code>L_ANISO</code>, which comes after level interpolation when cycling with the
+			<code>L</code> key. It measures both sides of the footprint, \(L_{\max}\) and \(L_{\min}\), and takes
+			\(N = \lceil L_{\max} / L_{\min} \rceil\) samples (at most 16) spread evenly along the long side. Each of these only needs to cover
+			\(L_{\max} / N\) texels, so it uses the much sharper level \(\log_2(L_{\max}/N)\) with trilinear filtering, and the \(N\) results are
+			averaged. When the footprint is square, \(N = 1\) and this is the same as trilinear. To show the effect, I made
+			<code>svg/texmap/bricks_floor.svg</code>, which lays the brick texture on a floor receding into the distance.
+		</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task6_ec_nearest.png" width="100%"/>
+						<figcaption>Nearest (level 0, nearest pixel)</figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task6_ec_bilinear.png" width="100%"/>
+						<figcaption>Bilinear (level 0, bilinear pixel)</figcaption>
+					</td>
+				</tr>
+				<tr>
+					<td style="text-align: center;">
+						<img src="assets/task6_ec_trilinear.png" width="100%"/>
+						<figcaption>Trilinear</figcaption>
+					</td>
+					<td style="text-align: center;">
+						<img src="assets/task6_ec_aniso.png" width="100%"/>
+						<figcaption>Anisotropic</figcaption>
+					</td>
+				</tr>
+			</table>
+		</div>
+		<ul>
+			<li><b>Nearest</b> and <b>bilinear</b> (both at level 0) look almost the same, and both break down toward the back of the
+				floor: the mortar lines turn into bands of false horizontal stripes, and curved moir&eacute; arcs appear in the lower middle.
+				The pixel inspector, placed on the far part of the floor, shows mortar pixels scattered almost at random.</li>
+			<li><b>Trilinear</b> removes that aliasing completely, but the individual bricks are only clearly visible in about the nearest
+				third of the floor; beyond that they blur into a soft, uniform texture, because the level is chosen from the heavily squashed
+				vertical direction and applied in both directions.</li>
+			<li><b>Anisotropic</b> is also free of aliasing, but it keeps individual bricks visible noticeably farther into the distance, and
+				the far part of the floor stays finely detailed instead of blurring, because each of its samples uses a sharper level and the
+				averaging happens along the squashed direction only.</li>
+		</ul>
+		<p>
+			Performance, measured with the <code>std::chrono</code> timer around <code>svg.draw()</code> and averaged over several redraws of
+			this scene at the same window size and view:
+		</p>
+		<table style="margin: 0 auto; border-collapse: collapse; text-align: center;">
+			<tr>
+				<th style="border-bottom: 1px solid #999; padding: 6px 16px;">Method</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 16px;">Time per frame</th>
+				<th style="border-bottom: 1px solid #999; padding: 6px 16px;">Relative to nearest</th>
+			</tr>
+			<tr><td style="padding: 6px 16px;">Nearest</td><td>7.8 ms</td><td>1.0&times;</td></tr>
+			<tr><td style="padding: 6px 16px;">Bilinear</td><td>14.8 ms</td><td>1.9&times;</td></tr>
+			<tr><td style="padding: 6px 16px;">Trilinear</td><td>20.5 ms</td><td>2.6&times;</td></tr>
+			<tr><td style="padding: 6px 16px;">Anisotropic</td><td>40.3 ms</td><td>5.2&times;</td></tr>
+		</table>
+		<p>
+			Anisotropic filtering costs about twice as much as trilinear here, because distant pixels take several trilinear lookups each.
+			The cost grows with how squashed the footprints are, which is also exactly where it helps the most.
+		</p>
 
 		<h2>(Optional) Task 7: Extra Credit - Draw Something Creative!</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
-
+		<p>I did not attempt this optional task.</p>
 		</div>
 	</body>
 </html>
